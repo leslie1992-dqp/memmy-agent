@@ -154,7 +154,6 @@ const PLATFORM_API_ERROR_FALLBACK_ZH = "平台服务响应异常，请稍后重�
 const PLATFORM_API_ERROR_FALLBACK_EN = "The platform service returned an unexpected response. Please try again later.";
 const USER_FACING_API_ERROR_PATTERNS = [
   /\bAPI returned empty choices\b/i,
-  /^Error:/i,
   /^Error calling LLM:/i,
   /\bAPI\b/i,
 ];
@@ -169,56 +168,26 @@ function platformApiErrorFallback(language: any): string {
     : PLATFORM_API_ERROR_FALLBACK_EN;
 }
 
-type UserFacingApiErrorKind = "user_token_quota_exhausted" | "upstream_billing_unavailable" | "upstream_rate_limited" | "platform_error";
-
-const USER_TOKEN_QUOTA_EXHAUSTED_ZH = "用户 Token 额度已用完";
-const USER_TOKEN_QUOTA_EXHAUSTED_EN = "Your user token quota has been used up.";
-const UPSTREAM_BILLING_UNAVAILABLE_ZH = "云端模型服务计费异常";
-const UPSTREAM_BILLING_UNAVAILABLE_EN = "The cloud model service has a billing issue.";
-const UPSTREAM_RATE_LIMITED_ZH = "云端模型服务繁忙，请稍后重试";
-const UPSTREAM_RATE_LIMITED_EN = "The cloud model service is busy. Please try again later.";
-const UPSTREAM_BILLING_ERROR_PATTERNS = [
-  /UPSTREAM_BILLING_UNAVAILABLE/i,
-  /\b(insufficient_balance|credit_balance_too_low|billing_hard_limit_reached|billing_not_active|payment_required)\b/i,
-  /(?:剩余(?:额度|余额)|余额)[^\n]*[$＄￥¥]/i,
-  /[$＄￥¥]\s*-?\d+(?:\.\d+)?/,
-];
-const USER_TOKEN_QUOTA_ERROR_PATTERNS = [
-  /USER_TOKEN_QUOTA_EXHAUSTED/i,
+const QUOTA_API_ERROR_FALLBACK_ZH = "当前账号的模型 Token 额度已用完，请充值或更换模型后重试。";
+const QUOTA_API_ERROR_FALLBACK_EN = "Your model token quota has been used up. Please top up or switch models, then try again.";
+const QUOTA_API_ERROR_PATTERNS = [
   /quota[\s_]*(exceeded|exhausted)/i,
   /insufficient[\s_]*quota/i,
   /REQUEST_TOKEN_QUOTA_EXCEEDED/i,
   /out of quota/i,
   /额度.*(用完|不足|超限)/,
 ];
-const UPSTREAM_RATE_LIMIT_ERROR_PATTERNS = [
-  /UPSTREAM_RATE_LIMITED/i,
-  /rate[\s_-]*limit(?:ed|ing|_exceeded)?/i,
-  /too many requests/i,
-  /\b429\b/,
-  /(请求过于频繁|速率限制|访问量过大)/,
-];
 
-function classifyUserFacingApiError(content: string | null | undefined): UserFacingApiErrorKind {
+function isQuotaApiError(content: string | null | undefined): boolean {
   const text = String(content ?? "");
-  if (UPSTREAM_BILLING_ERROR_PATTERNS.some((pattern) => pattern.test(text))) return "upstream_billing_unavailable";
-  if (USER_TOKEN_QUOTA_ERROR_PATTERNS.some((pattern) => pattern.test(text))) return "user_token_quota_exhausted";
-  if (UPSTREAM_RATE_LIMIT_ERROR_PATTERNS.some((pattern) => pattern.test(text))) return "upstream_rate_limited";
-  return "platform_error";
+  return QUOTA_API_ERROR_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function userFacingApiErrorFallback(language: any, content: string | null | undefined): string {
-  const chinese = usesChineseWebuiLanguage(language);
-  switch (classifyUserFacingApiError(content)) {
-    case "user_token_quota_exhausted":
-      return chinese ? USER_TOKEN_QUOTA_EXHAUSTED_ZH : USER_TOKEN_QUOTA_EXHAUSTED_EN;
-    case "upstream_billing_unavailable":
-      return chinese ? UPSTREAM_BILLING_UNAVAILABLE_ZH : UPSTREAM_BILLING_UNAVAILABLE_EN;
-    case "upstream_rate_limited":
-      return chinese ? UPSTREAM_RATE_LIMITED_ZH : UPSTREAM_RATE_LIMITED_EN;
-    default:
-      return platformApiErrorFallback(language);
+  if (isQuotaApiError(content)) {
+    return usesChineseWebuiLanguage(language) ? QUOTA_API_ERROR_FALLBACK_ZH : QUOTA_API_ERROR_FALLBACK_EN;
   }
+  return platformApiErrorFallback(language);
 }
 
 function isUserFacingApiError(content: string | null | undefined, stopReason: string): boolean {

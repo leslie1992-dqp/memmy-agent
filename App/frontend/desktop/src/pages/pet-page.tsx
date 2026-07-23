@@ -17,9 +17,6 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, Maximize, Maximize2,
 import { useAsrRecorder } from "./asr-recorder.js";
 import { createPetAgentBridge, PetReconnectRecoveryTracker } from "./pet-agent-bridge.js";
 import type { AgentArtifactClient } from "./agent-message-content.js";
-import { classifyAgentApiError, type AgentApiErrorKind } from "./agent-model-error.js";
-
-type Translate = ReturnType<typeof useTranslation>["t"];
 
 /** Type definition for display state. */
 export type DisplayState = "idle" | "active" | "processing" | "answering";
@@ -499,12 +496,7 @@ export function isPetDoubleClick(input: PetDoubleClickInput): boolean {
  * @param fallbackError The fallback text to show when there is no detailed error.
  * @returns A lightweight action that can be applied to the TaskBus.
  */
-export function resolvePetAgentEventAction(
-  event: MemmyAgentWsEvent,
-  currentText: string,
-  fallbackError: string,
-  translateError?: (kind: AgentApiErrorKind) => string | null
-): PetAgentEventAction {
+export function resolvePetAgentEventAction(event: MemmyAgentWsEvent, currentText: string, fallbackError: string): PetAgentEventAction {
   if (event.event === "delta") {
     const text = stringEventText(event);
     return text ? { type: "append", text } : { type: "ignore" };
@@ -533,7 +525,7 @@ export function resolvePetAgentEventAction(
   }
 
   if (event.event === "error") {
-    return { type: "error", message: resolvePetAgentErrorMessage(event, fallbackError, translateError) };
+    return { type: "error", message: resolvePetAgentErrorMessage(event, fallbackError) };
   }
 
   return { type: "ignore" };
@@ -546,43 +538,22 @@ export function resolvePetAgentEventAction(
  * @param fallback The fallback text to show when there is no readable error.
  * @returns User-visible error text.
  */
-export function resolvePetAgentErrorMessage(
-  value: unknown,
-  fallback: string,
-  translateError?: (kind: AgentApiErrorKind) => string | null
-): string {
-  let message: string | null = null;
+export function resolvePetAgentErrorMessage(value: unknown, fallback: string): string {
   if (value instanceof Error && value.message.trim()) {
-    message = value.message;
+    return value.message;
   }
 
-  if (!message && value && typeof value === "object") {
+  if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     for (const key of ["detail", "reason", "message"]) {
       const text = record[key];
       if (typeof text === "string" && text.trim()) {
-        message = text.trim();
-        break;
+        return text.trim();
       }
     }
   }
 
-  if (!message) return fallback;
-  return translateError?.(classifyAgentApiError(message)) ?? message;
-}
-
-function translatePetAgentError(kind: AgentApiErrorKind, t: Translate): string | null {
-  switch (kind) {
-    case "user_token_quota_exhausted":
-      return t("agent.error.quotaExceeded");
-    case "upstream_billing_unavailable":
-      return t("agent.error.upstreamBillingUnavailable");
-    case "upstream_rate_limited":
-    case "rate_limited":
-      return t("agent.error.upstreamRateLimited");
-    default:
-      return null;
-  }
+  return fallback;
 }
 
 /**
@@ -722,7 +693,7 @@ export function PetPage() {
       }
 
       const currentText = answerTextByTaskIdRef.current.get(taskId) ?? "";
-      const action = resolvePetAgentEventAction(event, currentText, t("pet.agentUnavailable"), (kind) => translatePetAgentError(kind, t));
+      const action = resolvePetAgentEventAction(event, currentText, t("pet.agentUnavailable"));
       if (action.type === "ignore") {
         return;
       }
@@ -843,7 +814,7 @@ export function PetPage() {
 
           taskIdByChatIdRef.current.delete(chatId);
           answerTextByTaskIdRef.current.delete(task.id);
-          busRef.current.errorTask(task.id, resolvePetAgentErrorMessage(error, t("pet.agentUnavailable"), (kind) => translatePetAgentError(kind, t)));
+          busRef.current.errorTask(task.id, resolvePetAgentErrorMessage(error, t("pet.agentUnavailable")));
         });
     },
     [cleanupPetAgentTaskRun, clients?.memmyAgent, ensurePetAgentConnection, handlePetAgentChatEvent, recoveryTracker, t]
@@ -1228,11 +1199,11 @@ export function PetPageView({ bus, mainRoute = "/main", onNavigate, onPetWindowC
         try {
           onSubmitTask(task, value);
         } catch (error) {
-          bus.errorTask(task.id, resolvePetAgentErrorMessage(error, t("pet.agentUnavailable"), (kind) => translatePetAgentError(kind, t)));
+          bus.errorTask(task.id, resolvePetAgentErrorMessage(error, t("pet.agentUnavailable")));
         }
       } else if (petAgentBridge) {
         void petAgentBridge.sendTask({ task, content: value }).catch((error: unknown) => {
-          bus.errorTask(task.id, toReadablePetAgentError(error, agentUnavailableMessage, t));
+          bus.errorTask(task.id, toReadablePetAgentError(error, agentUnavailableMessage));
         });
       } else {
         bus.errorTask(task.id, agentUnavailableMessage);
@@ -2600,8 +2571,8 @@ function toReadableAsrError(error: unknown, t: ReturnType<typeof useTranslation>
  * @param fallbackMessage The fallback text.
  * @returns Error text that can be shown in the pet task bubble.
  */
-function toReadablePetAgentError(error: unknown, fallbackMessage: string, t: Translate): string {
-  return resolvePetAgentErrorMessage(error, fallbackMessage, (kind) => translatePetAgentError(kind, t));
+function toReadablePetAgentError(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error && error.message ? error.message : fallbackMessage;
 }
 
 /**
