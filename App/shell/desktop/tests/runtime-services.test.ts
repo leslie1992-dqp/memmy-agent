@@ -8,6 +8,7 @@ import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AgentGatewaySupervisor,
+  preparePackagedBrowser,
   preparePackagedRuntimeConfig,
   restartExternalMemoryService,
   spawnNodeService,
@@ -147,6 +148,9 @@ describe("packaged desktop runtime config", () => {
         port: 18970,
         heartbeat: { enabled: false }
       },
+      fileMemory: {
+        enabled: false
+      },
       memmyMemory: {
         storage: {
           mode: "local",
@@ -166,6 +170,9 @@ describe("packaged desktop runtime config", () => {
     const workspace = join(memmyHome, "custom-workspace");
     const sqlitePath = join(memmyHome, "db", "memory.sqlite");
     await writeFile(configPath, YAML.stringify({
+      fileMemory: {
+        enabled: true
+      },
       agents: {
         defaults: {
           model: "anthropic/claude-sonnet",
@@ -230,6 +237,55 @@ describe("packaged desktop runtime config", () => {
       token: "memory-token",
       sqlitePath
     });
+    expect(recordValue(config, "fileMemory")).toEqual({ enabled: true });
+  });
+
+  it("fills a missing file memory enabled field without changing explicit values", async () => {
+    const missingHome = await makeTempRoot();
+    const missingPath = join(missingHome, "config.yaml");
+    await writeFile(missingPath, "fileMemory: {}\n", "utf8");
+
+    await preparePackagedRuntimeConfig({
+      env: { MEMMY_CONFIG: missingPath },
+      secretFactory: () => "stable-secret"
+    });
+
+    expect(recordValue(await readYaml(missingPath), "fileMemory")).toEqual({
+      enabled: false
+    });
+
+    const explicitHome = await makeTempRoot();
+    const explicitPath = join(explicitHome, "config.yaml");
+    await writeFile(
+      explicitPath,
+      "fileMemory:\n  enabled: false\n",
+      "utf8"
+    );
+    await preparePackagedRuntimeConfig({
+      env: { MEMMY_CONFIG: explicitPath },
+      secretFactory: () => "stable-secret"
+    });
+    expect(recordValue(await readYaml(explicitPath), "fileMemory")).toEqual({
+      enabled: false
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["array", []],
+    ["scalar", false],
+    ["non-boolean enabled", { enabled: "false" }]
+  ])("preserves invalid file memory config for schema rejection: %s", async (_label, expected) => {
+    const memmyHome = await makeTempRoot();
+    const configPath = join(memmyHome, "config.yaml");
+    await writeFile(configPath, YAML.stringify({ fileMemory: expected }), "utf8");
+
+    await preparePackagedRuntimeConfig({
+      env: { MEMMY_CONFIG: configPath },
+      secretFactory: () => "stable-secret"
+    });
+
+    expect((await readYaml(configPath)).fileMemory).toEqual(expected);
   });
 
   it("repairs missing memory active profile when profiles are configured", async () => {
@@ -316,6 +372,59 @@ describe("packaged desktop runtime config", () => {
       .resolves.toBe("# Example\n");
     await expect(readFile(join(agentWorkspace, "skills", "example", "references", "guide.md"), "utf8"))
       .resolves.toBe("guide\n");
+  });
+
+  it("prepares the packaged browser with the bundled agent runtime before services start", async () => {
+    const root = await makeTempRoot();
+    const agentEntry = join(root, "runtime", "memmy-agent", "dist", "main.js");
+    const logDirectory = join(root, "logs");
+    await mkdir(join(root, "runtime", "memmy-agent", "dist"), { recursive: true });
+    await mkdir(logDirectory, { recursive: true });
+    await writeFile(agentEntry, "// bundled agent\n", "utf8");
+    const child = new EventEmitter() as ChildProcess;
+    (child as any).stdout = Object.assign(new EventEmitter(), {
+      setEncoding: vi.fn(),
+    });
+    (child as any).stderr = Object.assign(new EventEmitter(), {
+      setEncoding: vi.fn(),
+    });
+    const spawnProcess = vi.fn(() => {
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return child;
+    });
+    const runtimeConfig = {
+      configPath: join(root, "config.yaml"),
+      agentWorkspace: join(root, "workspace"),
+    } as PackagedRuntimeConfig;
+
+    await expect(
+      preparePackagedBrowser(
+        { agentEntry, memoryEntry: join(root, "memory.js") },
+        runtimeConfig,
+        {
+          appPath: root,
+          resourcesPath: root,
+          logDirectory,
+          logLevel: "info",
+        },
+        spawnProcess as any,
+      ),
+    ).resolves.toBe(true);
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      process.execPath,
+      [agentEntry, "internal", "browser-prepare"],
+      expect.objectContaining({
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: expect.objectContaining({
+          MEMMY_CONFIG: runtimeConfig.configPath,
+          MEMMY_AGENT_WORKSPACE: runtimeConfig.agentWorkspace,
+          ELECTRON_RUN_AS_NODE: "1",
+        }),
+      }),
+    );
   });
 });
 

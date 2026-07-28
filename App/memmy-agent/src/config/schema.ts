@@ -595,6 +595,41 @@ export class WebToolsConfig extends Base {
   }
 }
 
+export class BrowserToolsConfig extends Base {
+  enabled = true;
+  maxSessions = 4;
+  idleTimeoutS = 900;
+
+  constructor(init: Dict = {}) {
+    super();
+    init = assertPlainObject("tools.browser", init);
+    this.enabled = assertBoolean(
+      "tools.browser.enabled",
+      pick(init, ["enabled"], this.enabled),
+    );
+    this.maxSessions = assertIntRange(
+      "tools.browser.maxSessions",
+      pick(init, ["maxSessions"], this.maxSessions),
+      1,
+      8,
+    );
+    this.idleTimeoutS = assertIntRange(
+      "tools.browser.idleTimeoutS",
+      pick(init, ["idleTimeoutS"], this.idleTimeoutS),
+      60,
+      3600,
+    );
+  }
+
+  override toObject(): Dict {
+    return {
+      enabled: this.enabled,
+      maxSessions: this.maxSessions,
+      idleTimeoutS: this.idleTimeoutS,
+    };
+  }
+}
+
 export class ExecToolConfig extends Base {
   enable = true;
   enabled = true;
@@ -847,24 +882,6 @@ function normalizeImageGenerationProvider(value: any): string {
   return provider;
 }
 
-export class MyToolConfig extends Base {
-  enable = true;
-  allowSet = false;
-
-  constructor(init: Dict = {}) {
-    super();
-    this.enable = pick(init, ["enable"], true);
-    this.allowSet = pick(init, ["allowSet"], false);
-  }
-
-  override toObject(): Dict {
-    return {
-      enable: this.enable,
-      allowSet: this.allowSet,
-    };
-  }
-}
-
 export class MCPServerConfig extends Base {
   type?: "stdio" | "sse" | "streamableHttp";
   transport?: "stdio" | "sse" | "streamableHttp";
@@ -893,11 +910,11 @@ export class MCPServerConfig extends Base {
 
 export class ToolsConfig extends Base {
   web: WebToolsConfig;
+  browser: BrowserToolsConfig;
   exec: ExecToolConfig;
   webSearch: WebSearchConfig;
   webFetch: WebFetchConfig;
   imageGeneration: ImageGenerationToolConfig;
-  my: MyToolConfig;
   restrictToWorkspace = false;
   ssrfWhitelist: string[] = [];
   mcpServers: Dict<MCPServerConfig>;
@@ -914,6 +931,10 @@ export class ToolsConfig extends Base {
             search: searchInit,
             fetch: fetchInit,
           });
+    this.browser =
+      init.browser instanceof BrowserToolsConfig
+        ? init.browser
+        : new BrowserToolsConfig(pick(init, ["browser"], {}));
     this.exec =
       init.exec instanceof ExecToolConfig ? init.exec : new ExecToolConfig(init.exec ?? {});
     this.webSearch = init.webSearch instanceof WebSearchConfig ? init.webSearch : this.web.search;
@@ -922,7 +943,6 @@ export class ToolsConfig extends Base {
       init.imageGeneration instanceof ImageGenerationToolConfig
         ? init.imageGeneration
         : new ImageGenerationToolConfig(pick(init, ["imageGeneration"], {}));
-    this.my = init.my instanceof MyToolConfig ? init.my : new MyToolConfig(init.my ?? {});
     this.restrictToWorkspace = pick(init, ["restrictToWorkspace"], false);
     this.ssrfWhitelist = assertStringArray("ssrfWhitelist", pick(init, ["ssrfWhitelist"], []));
     const mcp = pick(init, ["mcpServers"], {});
@@ -943,11 +963,11 @@ export class ToolsConfig extends Base {
     );
     return {
       web: this.web.toObject(),
+      browser: this.browser.toObject(),
       exec: this.exec.toObject(),
       webSearch: this.webSearch.toObject(),
       webFetch: this.webFetch.toObject(),
       imageGeneration: this.imageGeneration.toObject(),
-      my: this.my.toObject(),
       restrictToWorkspace: this.restrictToWorkspace,
       ssrfWhitelist: this.ssrfWhitelist,
       mcpServers: dumpServers,
@@ -1069,6 +1089,23 @@ export class MemmyMemoryConfig extends Base {
   }
 }
 
+export class FileMemoryConfig extends Base {
+  enabled = false;
+
+  constructor(init: unknown = {}) {
+    super();
+    const data = assertPlainObject("fileMemory", init);
+    this.enabled = assertBoolean(
+      "fileMemory.enabled",
+      pick(data, ["enabled"], false),
+    );
+  }
+
+  override toObject(): Dict {
+    return { enabled: this.enabled };
+  }
+}
+
 export class Config extends Base {
   app: Dict;
   agents: AgentsConfig;
@@ -1078,6 +1115,7 @@ export class Config extends Base {
   heartbeat: HeartbeatConfig;
   api: ApiConfig;
   gateway: GatewayConfig;
+  fileMemory: FileMemoryConfig;
   memmyMemory: MemmyMemoryConfig;
   modelPresets: Dict<ModelPresetConfig>;
   sessionDag: SessionDagConfig;
@@ -1112,6 +1150,13 @@ export class Config extends Base {
     this.api = init.api instanceof ApiConfig ? init.api : new ApiConfig(init.api ?? {});
     this.gateway =
       init.gateway instanceof GatewayConfig ? init.gateway : new GatewayConfig(init.gateway ?? {});
+    const fileMemory = Object.prototype.hasOwnProperty.call(init, "fileMemory")
+      ? init.fileMemory
+      : {};
+    this.fileMemory =
+      fileMemory instanceof FileMemoryConfig
+        ? fileMemory
+        : new FileMemoryConfig(fileMemory);
     if (!("heartbeat" in (init.gateway ?? {})) && init.heartbeat) {
       this.gateway.heartbeat =
         init.heartbeat instanceof HeartbeatConfig
@@ -1289,6 +1334,7 @@ export class Config extends Base {
       tools: this.tools,
       api: this.api,
       gateway: this.gateway,
+      fileMemory: this.fileMemory,
       memmyMemory: this.memmyMemory,
       sessionDag: this.sessionDag,
       contextCompaction: this.contextCompaction,
